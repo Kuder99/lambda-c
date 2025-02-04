@@ -3,6 +3,7 @@
 #include <string.h>
 
 #define LAMBDA_CHARACTER 'λ'
+#define NO_SUBSCRIPT -1
 
 static void print_error_at(const char *error, const char *str, int position);
 
@@ -95,7 +96,7 @@ int lambda_is_valid(const char* str, const size_t size)
 		if (!char_is_valid(*current))
 			goto error_invalid_character;
 
-		switch (*current) {
+		switch (*current & 0XFF) {
 		case '.':
 			goto error_unexpected_operator;
 		
@@ -103,12 +104,6 @@ int lambda_is_valid(const char* str, const size_t size)
 			goto error_unexpected_operator;
 
 		case '\\':
-			current++;
-
-			if (*current != 'l') {
-				goto error_invalid_backslash;
-			}
-
 			current = skip_whitespace(current + 1, end);
 
 			if (!char_is_name(*current)) {
@@ -133,11 +128,10 @@ int lambda_is_valid(const char* str, const size_t size)
 			break;
 
 		case ((LAMBDA_CHARACTER >> 8) & 0XFF):
-
 			current++;
 
-			if (*current != (LAMBDA_CHARACTER & 0XFF)) {
-				goto error_invalid_backslash;
+			if ((*current & 0XFF) != (LAMBDA_CHARACTER & 0XFF)) {
+				goto error_invalid_character;
 			}
 
 			current = skip_whitespace(current + 1, end);
@@ -228,10 +222,6 @@ int lambda_is_valid(const char* str, const size_t size)
 	print_error_at("invalid character.", str, current - str);
 	return 0;
 
-	error_invalid_backslash:
-	print_error_at("invalid backslash.", str, current - str);
-	return 0;
-
 	error_expected_argument:
 	print_error_at("expected argument after lambda operator.", str, current - str);
 	return 0;
@@ -293,7 +283,6 @@ static void stack_print(struct LambdaTerm **stack, size_t stack_count)
 
 		i++;
 	}
-
 	
 	if (*i == NULL) {
 		printf("NULL}\n");
@@ -326,13 +315,14 @@ static void stack_print(struct LambdaTerm **stack, size_t stack_count)
 
 static size_t stack_push(struct LambdaTerm **stack, size_t stack_count, struct LambdaTerm *term)
 {
-	// This function always assumes there is enough memory for pushing new terms
+	// This function assumes there is enough memory for pushing new terms
+	// This function assumes there is at least one member in the stack
+
+	// Peek the top, without popping.
 
 	struct LambdaTerm *top = stack[stack_count - 1];
 
 	if (top == NULL || term == NULL) {
-		// Push variable term to the top of the stack
-
 		stack[stack_count++] = term;
 
 		stack_print(stack, stack_count);
@@ -340,8 +330,8 @@ static size_t stack_push(struct LambdaTerm **stack, size_t stack_count, struct L
 		return stack_count;
 	}
 
-	if (term->type == INCOMPLETE_ABSTRACTION) {
-		// This creates a stack of abstractions over abstractions, which will be eventually flattened.
+	if (term->type == INCOMPLETE_ABSTRACTION || top->type == INCOMPLETE_ABSTRACTION) {
+		// This creates a stack of incomplete abstractions over incomplete abstractions, which will be eventually flattened.
 
 		stack[stack_count++] = term;
 
@@ -352,41 +342,17 @@ static size_t stack_push(struct LambdaTerm **stack, size_t stack_count, struct L
 
 	struct LambdaTerm *application;
 
-	switch (top->type) {
-	case VARIABLE:
-	case ABSTRACTION:
-	case APPLICATION:
-		application = malloc(sizeof(*application));
+	application = malloc(sizeof(*application));
 
-		application->type = APPLICATION;
-		application->expression.application.argument = term;
+	application->type = APPLICATION;
+	application->subscript = NO_SUBSCRIPT;
 
-		application->expression.application.function = top;
+	application->expression.application.argument = term;
+	application->expression.application.function = top;
 
-		// Pops the top term off of the stack and pushes the application
+	// Pops the top term off of the stack and pushes the application
 
-		stack[stack_count - 1] = application;
-
-		break;
-	case INCOMPLETE_ABSTRACTION:
-		// Increments the abstraction body
-
-		if (top->expression.abstraction.body == NULL) {
-			top->expression.abstraction.body = term;
-
-			break;
-		}
-
-		application = malloc(sizeof(*application));
-
-		application->type = APPLICATION;
-		application->expression.application.argument = term;
-
-		application->expression.application.function = top->expression.abstraction.body;
-		top->expression.abstraction.body = application;
-
-		break;
-	}
+	stack[stack_count - 1] = application;
 
 	stack_print(stack, stack_count);
 
@@ -396,62 +362,74 @@ static size_t stack_push(struct LambdaTerm **stack, size_t stack_count, struct L
 static size_t stack_flatten(struct LambdaTerm **stack, size_t stack_count)
 {
 	// This function does not increase stack_count.
-	// This function assumes there is a NULL pointer stored down the stack.
+	// This function assumes there is a NULL pointer stored down the stack which represents a left parenthesis.
 	// This function assumes that stack_count >= 2
 
 	struct LambdaTerm *push = stack[--stack_count];
 	struct LambdaTerm *top = stack[--stack_count];
 
 	while (top != NULL) {
-		struct LambdaTerm *application;
-
 		if (push->type == INCOMPLETE_ABSTRACTION) {
 			push->type = ABSTRACTION;
 		}
 
-		switch (top->type) {
-		case INCOMPLETE_ABSTRACTION:
-			if (top->expression.abstraction.body == NULL) {
-				top->expression.abstraction.body = push;
-			} else {
-				application = malloc(sizeof(*application));
-
-				application->type = APPLICATION;
-
-				application->expression.application.argument = push;
-				application->expression.application.function = top->expression.abstraction.body;
-
-				top->expression.abstraction.body = application;
-			}
-
-			top->type = ABSTRACTION;
+		if (top->type == INCOMPLETE_ABSTRACTION) {
+			top->expression.abstraction.body = push;
 			push = top;
 
-			break;
+			top = stack[--stack_count];
 
-		case VARIABLE:
-		case ABSTRACTION:
-		case APPLICATION:
-
-			application = malloc(sizeof(*application));
-
-			application->type = APPLICATION;
-
-			application->expression.application.argument = push;
-			application->expression.application.function = top;
-
-			push = application;
-
-			break;
+			continue;
 		}
+		
+		struct LambdaTerm *application;
+
+		application = malloc(sizeof(*application));
+
+		application->type = APPLICATION;
+		application->subscript = NO_SUBSCRIPT;
+
+		application->expression.application.argument = push;
+		application->expression.application.function = top;
+
+		push = application;
 
 		top = stack[--stack_count];
-		stack_print(stack, stack_count);
 	}
 
 	if (push->type == INCOMPLETE_ABSTRACTION) {
 		push->type = ABSTRACTION;
 	}
+
+	// Left associativity of application handling after flattening
+
+	if (stack_count == 0) {
+		goto end;
+	}
+
+	top = stack[stack_count - 1];
+
+	if (top != NULL) {
+		if (top->type == INCOMPLETE_ABSTRACTION) {
+			goto end;
+		}
+
+		stack_count--;
+
+		struct LambdaTerm *application;
+
+		application = malloc(sizeof(*application));
+
+		application->type = APPLICATION;
+		application->subscript = NO_SUBSCRIPT;
+
+		application->expression.application.argument = push;
+		application->expression.application.function = top;
+
+		push = application;
+	}
+
+	end:
 
 	stack[stack_count++] = push;
 
@@ -503,11 +481,12 @@ struct LambdaHandle lambda_parse(const char *expression, const size_t size)
 
 		char *name;
 
-		switch (*current) {
+		switch (*current & 0XFF) {
 		case '(':
-			// Add NULL member
+			// Add NULL member representing a left parenthesis signal.
 
-			stack[stack_count++] = NULL;
+			stack_count = stack_push(stack, stack_count, NULL);
+
 			current++;
 
 			if (temporary == TERNARY_UNKNOWN) {
@@ -517,12 +496,12 @@ struct LambdaHandle lambda_parse(const char *expression, const size_t size)
 			break;
 
 		case ((LAMBDA_CHARACTER >> 8) & 0XFF):
+			current++;
+
 		case '\\':
 			// Parse abstraction
 
-			current += 2;
-
-			current = skip_whitespace(current, end);
+			current = skip_whitespace(current + 1, end);
 
 			name_begin = current;
 
@@ -546,6 +525,8 @@ struct LambdaHandle lambda_parse(const char *expression, const size_t size)
 			term = malloc(sizeof(*term));
 
 			term->type = INCOMPLETE_ABSTRACTION;
+			term->subscript = NO_SUBSCRIPT;
+
 			term->expression.abstraction.argument = name;
 			term->expression.abstraction.body = NULL;
 
@@ -581,6 +562,7 @@ struct LambdaHandle lambda_parse(const char *expression, const size_t size)
 				term = malloc(sizeof(*term));
 
 				term->type = VARIABLE;
+				term->subscript = NO_SUBSCRIPT;
 
 				term->expression.variable = name;
 
@@ -595,6 +577,7 @@ struct LambdaHandle lambda_parse(const char *expression, const size_t size)
 				term = malloc(sizeof(*term));
 
 				term->type = VARIABLE;
+				term->subscript = NO_SUBSCRIPT;
 
 				term->expression.variable = name;
 
@@ -647,7 +630,7 @@ void lambda_free(struct LambdaHandle lambda)
 		// This should never happen
 		return;
 
-	// A stack-based pre-order traversal deallocation that flattens the tree structure of LambdaTerm
+	// A stack-based pre-order traversal deallocation function
 
 	size_t stack_count = 1;
 	size_t stack_capacity = 8;
@@ -743,44 +726,122 @@ void lambda_print(struct LambdaHandle lambda)
 		printf("%s = ", lambda.name);
 	}
 
-	struct LambdaHandle wrapper;
+	struct LambdaTerm **stack;
 
-	switch (lambda.term->type) {
-	case VARIABLE:
-		printf("%s", lambda.term->expression.variable);
+	size_t stack_count = 1;
+	size_t stack_capacity = 16;
 
-		break;
-	case ABSTRACTION:
-		printf("(λ%s. ", lambda.term->expression.abstraction.argument);
+	stack = malloc(sizeof(*stack) * stack_capacity);
 
-		wrapper.name = NULL;
-		wrapper.term = lambda.term->expression.abstraction.body;
+	stack[0] = lambda.term;
 
-		lambda_print(wrapper);
+	struct LambdaTerm space_signal;
 
-		printf(")");
+	struct LambdaTerm left_parenthesis_signal;
+	struct LambdaTerm right_parenthesis_signal;
 
-		break;
-	case APPLICATION:
-		printf("(");
+	while (stack_count > 0) {
+		struct LambdaTerm *top = stack[--stack_count];
 
-		wrapper.name = NULL;
-		wrapper.term = lambda.term->expression.application.function;
+		if (top == NULL) {
+			// This is never reached
+			return;
+		}
 
-		lambda_print(wrapper);
-		
-		printf(" ");
+		if (top == &space_signal) {
+			putchar(' ');
+			continue;
+		}
 
-		wrapper.name = NULL;
-		wrapper.term = lambda.term->expression.application.argument;
+		if (top == &right_parenthesis_signal) {
+			putchar(')');
+			continue;
+		}
 
-		lambda_print(wrapper);
-		
-		printf(")");
-		
-		break;
-	case INCOMPLETE_ABSTRACTION:
-	default:
-		break;
+		if (top == &left_parenthesis_signal) {
+			putchar('(');
+			continue;
+		}
+
+		switch (top->type) {
+		case VARIABLE:
+			printf("%s", top->expression.variable);
+
+			if (top->subscript >= 0) {
+				printf("_%d", top->subscript);
+			}
+
+			break;
+
+		case ABSTRACTION:
+			printf("λ%s. ", top->expression.abstraction.argument);
+
+			if (top->subscript >= 0) {
+				printf("_%d", top->subscript);
+			}
+
+			stack[stack_count++] = top->expression.abstraction.body;
+
+			break;
+
+		case APPLICATION:
+
+			struct LambdaTerm *function = top->expression.application.function;
+			struct LambdaTerm *argument = top->expression.application.argument;
+
+			// Formatting
+
+			int function_parenthesis = 0;
+			int argument_parenthesis = 0;
+
+			int space = 1;
+
+			if (function->type == ABSTRACTION)
+				function_parenthesis = 1;
+
+			if (function->type == APPLICATION)
+				if (function->expression.application.argument->type == ABSTRACTION)
+					function_parenthesis = 1;
+
+			if (argument->type == APPLICATION) {
+				argument_parenthesis = 1;
+				space = 0;
+			}
+
+			// Stack pushes
+
+			if (argument_parenthesis)
+				stack[stack_count++] = &right_parenthesis_signal;
+
+			stack[stack_count++] = argument;
+
+			if (argument_parenthesis)
+				stack[stack_count++] = &left_parenthesis_signal;
+
+			if (space)
+				stack[stack_count++] = &space_signal;
+
+			if (function_parenthesis)
+				stack[stack_count++] = &right_parenthesis_signal;
+
+			stack[stack_count++] = function;
+
+			if (function_parenthesis)
+				putchar('(');
+
+			break;
+
+		default:
+			// This is never reached
+			break;
+		}
+
+		if (stack_capacity - stack_count <= 8) {
+			stack_capacity <<= 1;
+
+			stack = realloc(stack, sizeof(*stack) * stack_capacity);
+		}
 	}
+
+	free(stack);
 }
