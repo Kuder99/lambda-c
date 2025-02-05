@@ -6,7 +6,8 @@ enum ExpressionType {
 	VARIABLE,
 	ABSTRACTION,
 	APPLICATION,
-	INCOMPLETE_ABSTRACTION
+	INCOMPLETE_ABSTRACTION,
+	CHURCH_NUMERAL
 };
 
 // Abstract Syntax Tree lambda term data structure
@@ -31,7 +32,9 @@ struct LambdaTerm {
 
 struct LambdaHandle {
 	struct LambdaTerm *term;
+
 	char *name;
+	int subscript;
 };
 
 int lambda_is_valid(const char *str, const size_t size);	// Determines whether a string represents a valid lambda term

@@ -9,9 +9,11 @@ static void print_error_at(const char *error, const char *str, int position);
 
 static const char *skip_whitespace(const char *str, const char *end);
 static const char *skip_name(const char *str, const char *end);
+static const char *skip_digits(const char *str, const char *end);
 
 static int char_is_valid(char c);
 static int char_is_name(char c);
+static int char_is_digit(char c);
 
 const char *skip_whitespace(const char *str, const char *end)
 {
@@ -24,6 +26,15 @@ const char *skip_whitespace(const char *str, const char *end)
 const char *skip_name(const char *str, const char *end)
 {
 	while (char_is_name(*str) && (end > str)) {
+		str++;
+	}
+
+	return str;
+}
+
+const char *skip_digits(const char *str, const char *end)
+{
+	while (char_is_digit(*str) && (end > str)) {
 		str++;
 	}
 
@@ -46,7 +57,21 @@ int char_is_valid(char c)
 
 int char_is_name(char c)
 {
-	const char *table = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+	const char *table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
+	const char *it = table;
+
+	while (*it != '\0') {
+		if (*it++ == c)
+			return 1;
+	}
+
+	return 0;
+}
+
+int char_is_digit(char c)
+{
+	const char *table = "0123456789";
 
 	const char *it = table;
 
@@ -96,6 +121,15 @@ int lambda_is_valid(const char* str, const size_t size)
 		if (!char_is_valid(*current))
 			goto error_invalid_character;
 
+		if (char_is_digit(*current)) {
+			current = skip_digits(current + 1, end);
+			current = skip_whitespace(current, end);
+
+			expression_expected = 0;
+
+			continue;
+		}
+
 		switch (*current & 0XFF) {
 		case '.':
 			goto error_unexpected_operator;
@@ -112,6 +146,10 @@ int lambda_is_valid(const char* str, const size_t size)
 
 			current = skip_name(current + 1, end);
 			current = skip_whitespace(current, end);
+
+			if (char_is_digit(*current)) {
+				current = skip_digits(current + 1, end);
+			}
 
 			if (*current != '.') {
 				goto error_expected_dot;
@@ -142,6 +180,10 @@ int lambda_is_valid(const char* str, const size_t size)
 
 			current = skip_name(current + 1, end);
 			current = skip_whitespace(current, end);
+
+			if (char_is_digit(*current)) {
+				current = skip_digits(current + 1, end);
+			}
 
 			if (*current != '.') {
 				goto error_expected_dot;
@@ -183,6 +225,10 @@ int lambda_is_valid(const char* str, const size_t size)
 		default:
 			expression_expected = 0;
 			current = skip_name(current + 1, end);
+
+			if (char_is_digit(*current)) {
+				current = skip_digits(current + 1, end);
+			}
 
 			if (temporary != TERNARY_UNKNOWN) {
 				break;
@@ -438,10 +484,46 @@ static size_t stack_flatten(struct LambdaTerm **stack, size_t stack_count)
 	return stack_count;
 }
 
+struct VariableNameHandle {
+	char *name;
+	int subscript;
+};
+
+struct VariableNameHandle name_parse(const char **current, const char *end) {
+	struct VariableNameHandle handle;
+
+	size_t name_length;
+
+	const char *name_begin;
+	const char *name_end;
+
+	name_begin = *current;
+
+	*current = skip_name(*current + 1, end);
+	name_end = *current;
+
+	name_length = name_end - name_begin + 1;
+
+	handle.name = malloc(sizeof(*handle.name) * name_length);
+
+	strncpy(handle.name, name_begin, name_length - 1);
+	handle.name[name_length - 1] = '\0';
+
+	// Parse subscript
+
+	handle.subscript = NO_SUBSCRIPT;
+
+	if (char_is_digit(**current)) {
+		handle.subscript = (int)strtol(*current, (char**)current, 10);
+	}
+
+	return handle;
+}
+
 struct LambdaHandle lambda_parse(const char *expression, const size_t size)
 {
-	struct LambdaHandle lambda = (struct LambdaHandle){NULL, NULL};
-
+	struct LambdaHandle lambda = (struct LambdaHandle){NULL, NULL, NO_SUBSCRIPT};
+	
 	int is_valid = lambda_is_valid(expression, size);
 
 	if (!is_valid) {
@@ -473,61 +555,105 @@ struct LambdaHandle lambda_parse(const char *expression, const size_t size)
 
 	while (*current != '\0' && current < end) {
 		struct LambdaTerm *term;
+		struct VariableNameHandle handle;
 
-		size_t name_length;
+		if (char_is_digit(*current)) {
+			// Parsing Church numeral
 
-		const char *name_begin;
-		const char *name_end;
+			int subscript = (int)strtol(current, (char**)&current, 10);
 
-		char *name;
+			term = malloc(sizeof(*term));
+
+			term->type = CHURCH_NUMERAL;
+			term->subscript = subscript;
+
+			stack_count = stack_push(stack, stack_count, term);
+
+			if (temporary == TERNARY_UNKNOWN) {
+				// If a Church numeral has been reached before a variable name, then the expression is temporary
+				temporary = TERNARY_TRUE;
+			}
+
+			goto skip_switch;
+		}
+
+		if (char_is_name(*current)) {
+			// Parse name
+
+			handle = name_parse(&current, end);
+			current = skip_whitespace(current, end);
+
+			if (temporary == TERNARY_UNKNOWN && *current == '=') {
+				// Free variable name (equals sign reached and temporary == TERNARY_UNKNOWN)
+				// This only runs once
+
+				lambda.name = handle.name;
+				lambda.subscript = handle.subscript;
+
+				current++;
+
+				temporary = TERNARY_FALSE;
+
+				goto skip_switch;
+			}
+
+			// Otherwise just push a new variable
+
+			term = malloc(sizeof(*term));
+
+			term->type = VARIABLE;
+			term->subscript = handle.subscript;
+
+			term->expression.variable = handle.name;
+
+			stack_count = stack_push(stack, stack_count, term);
+
+			goto skip_switch;
+		}
+
+		// This switch statement is skipped if a digit or a letter is reached
 
 		switch (*current & 0XFF) {
 		case '(':
-			// Add NULL member representing a left parenthesis signal.
+			// Add NULL member representing a left parenthesis signal for stack_flatten.
 
 			stack_count = stack_push(stack, stack_count, NULL);
 
 			current++;
 
 			if (temporary == TERNARY_UNKNOWN) {
+				// If a left parenthesis is reached before a variable name, then the expression is temporary
 				temporary = TERNARY_TRUE;
 			}
 
 			break;
 
 		case ((LAMBDA_CHARACTER >> 8) & 0XFF):
+			// Skipping the additional byte of the λ character
 			current++;
 
 		case '\\':
-			// Parse abstraction
+			// Parse abstraction bound variable name
 
 			current = skip_whitespace(current + 1, end);
-
-			name_begin = current;
-
-			current = skip_name(current + 1, end);
-			name_end = current;
-
-			name_length = name_end - name_begin + 1;
-
-			name = malloc(sizeof(*name) * name_length);
-
-			strncpy(name, name_begin, name_length - 1);
-			name[name_length - 1] = '\0';
+			handle = name_parse(&current, end);
 
 			// Skip dot
 
 			current = skip_whitespace(current, end);
 			current++;
 
-			// Push abstraction
+			// Push incomplete abstraction
 
 			term = malloc(sizeof(*term));
 
 			term->type = INCOMPLETE_ABSTRACTION;
-			term->subscript = NO_SUBSCRIPT;
+			term->subscript = handle.subscript;
 
-			term->expression.abstraction.argument = name;
+			term->expression.abstraction.argument = handle.name;
+
+			// The abstraction body will be set once stack_flatten is called
+
 			term->expression.abstraction.body = NULL;
 
 			stack_count = stack_push(stack, stack_count, term);
@@ -535,65 +661,16 @@ struct LambdaHandle lambda_parse(const char *expression, const size_t size)
 			break;
 
 		case ')':
-			// Flatten stack until NULL member
+			// Flatten stack until NULL member, currying and completing abstractions
 
 			stack_count = stack_flatten(stack, stack_count);
 
 			current++;
 
 			break;
-
-		default:
-			// Parse name
-
-			name_begin = current;
-
-			current = skip_name(current + 1, end);
-			name_end = current;
-
-			name_length = name_end - name_begin + 1;
-
-			name = malloc(sizeof(*name) * name_length);
-
-			strncpy(name, name_begin, name_length - 1);
-			name[name_length - 1] = '\0';
-
-			if (temporary != TERNARY_UNKNOWN) {
-				term = malloc(sizeof(*term));
-
-				term->type = VARIABLE;
-				term->subscript = NO_SUBSCRIPT;
-
-				term->expression.variable = name;
-
-				stack_count = stack_push(stack, stack_count, term);
-
-				break;
-			}
-
-			current = skip_whitespace(current, end);
-
-			if (*current != '=') {
-				term = malloc(sizeof(*term));
-
-				term->type = VARIABLE;
-				term->subscript = NO_SUBSCRIPT;
-
-				term->expression.variable = name;
-
-				stack_count = stack_push(stack, stack_count, term);
-
-				temporary = TERNARY_TRUE;
-				break;
-			}
-
-			lambda.name = name;
-			current++;
-
-			temporary = TERNARY_FALSE;
-
-			break;
 		}
+
+		skip_switch:
 
 		// Resizing the stack array to fit new members
 
@@ -610,9 +687,9 @@ struct LambdaHandle lambda_parse(const char *expression, const size_t size)
 		current = skip_whitespace(current, end);
 	}
 
-	while (stack_count > 1) {
-		stack_count = stack_flatten(stack, stack_count);
-	}
+	// Binding the remaining incomplete abstractions
+
+	stack_count = stack_flatten(stack, stack_count);
 
 	lambda.term = stack[0];
 
@@ -691,9 +768,11 @@ void lambda_free(struct LambdaHandle lambda)
 		}
 			break;
 
+		case CHURCH_NUMERAL:
+			// Church numerals allocate no additional memory
+
 		case INCOMPLETE_ABSTRACTION:
 		default:
-			// This should never happen
 			break;
 		}
 
@@ -765,19 +844,19 @@ void lambda_print(struct LambdaHandle lambda)
 
 		switch (top->type) {
 		case VARIABLE:
-			printf("%s", top->expression.variable);
-
-			if (top->subscript >= 0) {
-				printf("_%d", top->subscript);
+			if (top->subscript < 0) {
+				printf("%s", top->expression.variable);
+			} else {
+				printf("%s%d", top->expression.variable, top->subscript);
 			}
 
 			break;
 
 		case ABSTRACTION:
-			printf("λ%s. ", top->expression.abstraction.argument);
-
-			if (top->subscript >= 0) {
-				printf("_%d", top->subscript);
+			if (top->subscript < 0) {
+				printf("λ%s. ", top->expression.abstraction.argument);
+			} else {
+				printf("λ%s%d. ", top->expression.abstraction.argument, top->subscript);
 			}
 
 			stack[stack_count++] = top->expression.abstraction.body;
@@ -785,7 +864,6 @@ void lambda_print(struct LambdaHandle lambda)
 			break;
 
 		case APPLICATION:
-
 			struct LambdaTerm *function = top->expression.application.function;
 			struct LambdaTerm *argument = top->expression.application.argument;
 
@@ -830,6 +908,9 @@ void lambda_print(struct LambdaHandle lambda)
 				putchar('(');
 
 			break;
+		
+		case CHURCH_NUMERAL:
+			printf("%d", top->subscript);
 
 		default:
 			// This is never reached
