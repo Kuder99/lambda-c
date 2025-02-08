@@ -1,4 +1,5 @@
-#include <lambda_term.h>
+#include <lambda.h>
+#include <printing.h>
 #include <stdio.h>
 #include <string.h>
 
