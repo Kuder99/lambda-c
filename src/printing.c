@@ -132,14 +132,14 @@ void lambda_print(struct LambdaHandle lambda)
 
 		// Scaling arrays
 
-		if (terms_capacity - terms_size >= 2) {
+		if (terms_capacity - terms_size <= 1) {
 			// Scaling factor of 2
 			terms_capacity <<= 1;
 
 			terms = realloc(terms, sizeof(*terms) * terms_capacity);
 		}
 
-		if (symbols_capacity - symbols_size >= 3) {
+		if (symbols_capacity - symbols_size <= 3) {
 			// Scaling factor of 2
 			symbols_capacity <<= 1;
 
