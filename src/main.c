@@ -1,3 +1,4 @@
+#include <hashmap.h>
 #include <lambda.h>
 #include <printing.h>
 #include <stdio.h>
@@ -8,9 +9,12 @@
 int main()
 {
 	char input[BUFFER_SIZE];
-	struct LambdaHandle lambda;
+	struct HashMap hashmap;
 
-	printf("λ-C: a λ-calculus abstraction and application interpreter.");
+	hashmap = hashmap_create();
+
+	printf("λ-C: a Lambda Calculus (λ-calculus) abstraction and application interpreter.\n");
+	printf("Made by victorsavas (https://github.com/victorsavas/lambda-c)\n");
 
 	while (1) {
 		printf("\nλ> ");
@@ -24,14 +28,26 @@ int main()
 
 		input[null_pos] = '\0';
 
-		lambda = lambda_parse(input, null_pos + 1);
+		if (input[0] == ':') {
+			break;
+		}
+
+		struct LambdaHandle lambda = lambda_parse(input, null_pos + 1);
+
+		if (lambda.term == NULL) {
+			continue;
+		}
 
 		lambda_print(lambda);
 
-		printf("\n");
-
-		lambda_free(lambda);
+		if (lambda.identifier.name == NULL) {
+			lambda_free(lambda);
+		} else {
+			hashmap_set(&hashmap, lambda);
+		}
 	}
+
+	hashmap_destroy(hashmap);
 
 	return 0;
 }

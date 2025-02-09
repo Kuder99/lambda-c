@@ -14,8 +14,12 @@ static void church_numeral_print(struct LambdaTerm *term);
 static void variable_print(struct LambdaTerm *term);
 static void abstraction_print(struct LambdaTerm *term);
 
+static void application_symbols_push(struct LambdaTerm *function, struct LambdaTerm *argument, enum PrintSymbol *symbols, size_t *symbols_size);
+
 void lambda_print(struct LambdaHandle lambda)
 {
+	// Minimal parenthesis printing
+
 	if (lambda.term == NULL)
 		return;
 	
@@ -61,11 +65,13 @@ void lambda_print(struct LambdaHandle lambda)
 		switch (term->type) {
 		case CHURCH_NUMERAL:
 			church_numeral_print(term);
+
 			break;
 
 		case FREE_VARIABLE:
 		case BOUND_VARIABLE:
 			variable_print(term);
+			
 			break;
 		
 		case ABSTRACTION:
@@ -83,49 +89,7 @@ void lambda_print(struct LambdaHandle lambda)
 			terms[terms_size++] = argument;
 			terms[terms_size++] = function;
 
-			switch (argument->type) {
-			case CHURCH_NUMERAL:
-			case FREE_VARIABLE:
-			case BOUND_VARIABLE:
-				symbols[symbols_size++] = SPACE;
-				break;
-
-			case ABSTRACTION:
-				symbols[symbols_size++] = SPACE;
-
-				break;
-			
-			case APPLICATION:
-				symbols[symbols_size++] = RIGHT_PARENTHESIS;
-				symbols[symbols_size++] = LEFT_PARENTHESIS;
-				
-				break;
-			}
-
-			switch (function->type) {
-			case CHURCH_NUMERAL:
-			case FREE_VARIABLE:
-			case BOUND_VARIABLE:
-				symbols[symbols_size++] = EMPTY;
-				break;
-
-			case ABSTRACTION:
-				symbols[symbols_size++] = RIGHT_PARENTHESIS;
-				symbols[symbols_size++] = LEFT_PARENTHESIS;
-
-				break;
-
-			case APPLICATION:
-
-				if (function->expression.application.argument->type == ABSTRACTION) {
-					symbols[symbols_size++] = RIGHT_PARENTHESIS;
-					symbols[symbols_size++] = LEFT_PARENTHESIS;
-				} else {
-					symbols[symbols_size++] = EMPTY;
-				}
-
-				break;
-			}
+			application_symbols_push(function, argument, symbols, &symbols_size);
 
 			break;
 		}
@@ -133,14 +97,12 @@ void lambda_print(struct LambdaHandle lambda)
 		// Scaling arrays
 
 		if (terms_capacity - terms_size <= 1) {
-			// Scaling factor of 2
 			terms_capacity <<= 1;
 
 			terms = realloc(terms, sizeof(*terms) * terms_capacity);
 		}
 
 		if (symbols_capacity - symbols_size <= 3) {
-			// Scaling factor of 2
 			symbols_capacity <<= 1;
 
 			symbols = realloc(symbols, sizeof(*symbols) * symbols_capacity);
@@ -152,11 +114,7 @@ void lambda_print(struct LambdaHandle lambda)
 	while (symbols_size > 0) {
 		enum PrintSymbol symbol;
 
-		if (symbols_size > 0) {
-			symbol = symbols[--symbols_size];
-		} else {
-			symbol = EMPTY;
-		}
+		symbol = symbols[--symbols_size];
 
 		symbol_print(symbol);
 	}
@@ -165,6 +123,50 @@ void lambda_print(struct LambdaHandle lambda)
 
 	free(symbols);
 	free(terms);
+}
+
+void application_symbols_push(struct LambdaTerm *function, struct LambdaTerm *argument, enum PrintSymbol *symbols, size_t *symbols_size)
+{
+	switch (argument->type) {
+	case CHURCH_NUMERAL:
+	case FREE_VARIABLE:
+	case BOUND_VARIABLE:
+		symbols[(*symbols_size)++] = SPACE;
+		break;
+
+	case ABSTRACTION:
+		symbols[(*symbols_size)++] = SPACE;
+		break;
+				
+	case APPLICATION:
+		symbols[(*symbols_size)++] = RIGHT_PARENTHESIS;
+		symbols[(*symbols_size)++] = LEFT_PARENTHESIS;
+		
+		break;
+	}
+
+	switch (function->type) {
+	case CHURCH_NUMERAL:
+	case FREE_VARIABLE:
+	case BOUND_VARIABLE:
+		symbols[(*symbols_size)++] = EMPTY;
+		break;
+
+	case ABSTRACTION:
+		symbols[(*symbols_size)++] = RIGHT_PARENTHESIS;
+		symbols[(*symbols_size)++] = LEFT_PARENTHESIS;
+		break;
+
+	case APPLICATION:
+		if (function->expression.application.argument->type == ABSTRACTION) {
+			symbols[(*symbols_size)++] = RIGHT_PARENTHESIS;
+			symbols[(*symbols_size)++] = LEFT_PARENTHESIS;
+		} else {
+			symbols[(*symbols_size)++] = EMPTY;
+		}
+
+		break;
+	}
 }
 
 void symbol_print(enum PrintSymbol symbol)

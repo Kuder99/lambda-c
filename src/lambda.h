@@ -53,5 +53,5 @@ struct LambdaHandle {
 };
 
 
-struct LambdaHandle lambda_parse(const char *expression, const size_t size);	// Wraps a lambda term represented by a string in a AST
-void lambda_free(struct LambdaHandle lambda);	// Frees the allocated memory of a lambda term
+struct LambdaHandle lambda_parse(const char *expression, const size_t size);	// Parses a lambda term represented by a string and wraps it around a AST
+void lambda_free(struct LambdaHandle lambda);					// Frees the allocated memory of a lambda term

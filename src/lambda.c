@@ -204,7 +204,7 @@ static struct LambdaTerm *abstraction_parse(
 );
 
 static void terms_push(struct LambdaTerm *term, struct LambdaTerm ***terms, size_t *terms_size, size_t *terms_capacity);
-void terms_bind(struct LambdaTerm **terms, size_t *terms_size, size_t *bound_variables_size);
+static void terms_bind(struct LambdaTerm **terms, size_t *terms_size, size_t *bound_variables_size);
 
 #ifdef STACK_DEBUG
 static void stack_print(struct LambdaTerm **terms, size_t terms_size)
@@ -439,11 +439,9 @@ struct LambdaHandle lambda_parse(const char *expression, const size_t size)
 void lambda_free(struct LambdaHandle lambda)
 {
 	if (lambda.term == NULL)
-		// This should never happen
 		return;
 
-	if (lambda.identifier.name != NULL)
-		free(lambda.identifier.name);
+	free(lambda.identifier.name);
 
 	// Freeing memory stored in variables
 
@@ -478,40 +476,37 @@ void lambda_free(struct LambdaHandle lambda)
 
 		switch (top_term->type) {
 		case ABSTRACTION:
-		{
 			char *name = top_term->expression.abstraction.bound_variable.name;
 			struct LambdaTerm *body = top_term->expression.abstraction.body;
 			
-			if (name != NULL)
-				free(name);
-			
-			if (body != NULL)
-				terms[terms_size++] = body;
-		}
+			free(name);
+
+			terms[terms_size++] = body;
+
 			break;
 		
 		case APPLICATION:
-		{
 			struct LambdaTerm *function = top_term->expression.application.function;
 			struct LambdaTerm *argument = top_term->expression.application.argument;
 
 			terms[terms_size++] = function;
 			terms[terms_size++] = argument;
 
-		}
 			break;
 		}
 
+		// Freeing the popped term
+
 		free(top_term);
 
-		// Resizing the terms array to fit new members
+		// Resizing the terms stack to fit new members
 
 		if (terms_capacity - terms_size <= 1) {
 			// Scaling factor of 2
 
 			terms_capacity <<= 1;
 
-			// Reallocate the terms
+			// Reallocate the terms stack
 
 			terms = realloc(terms, terms_capacity * sizeof(*terms));
 		}
